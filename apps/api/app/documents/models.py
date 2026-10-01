@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -112,6 +113,11 @@ class DocumentExtraction(UUIDPrimaryKeyMixin, Base):
 class DocumentPage(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "document_pages"
     __table_args__ = (
+        UniqueConstraint(
+            "extraction_id",
+            "page_number",
+            name="uq_document_pages_extraction_page_number",
+        ),
         CheckConstraint("page_number >= 1", name="page_number_positive"),
         CheckConstraint("width > 0 AND height > 0", name="dimensions_positive"),
     )

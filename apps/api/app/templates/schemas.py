@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -129,6 +130,35 @@ class PublishTemplateRequest(BaseModel):
     expected_lock_version: int = Field(ge=1)
 
 
+class CreateTemplateVersionRequest(BaseModel):
+    source_version_id: uuid.UUID | None = None
+
+
+class CloneTemplateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    source_version_id: uuid.UUID | None = None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Template name must not be blank.")
+        return value
+
+
+class ReorderTemplateColumnsRequest(BaseModel):
+    expected_lock_version: int = Field(ge=1)
+    column_ids: list[uuid.UUID] = Field(min_length=1)
+
+    @field_validator("column_ids")
+    @classmethod
+    def unique_column_ids(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("Each column must appear exactly once.")
+        return value
+
+
 class TemplateColumnRead(BaseModel):
     id: uuid.UUID
     name: str
@@ -166,6 +196,8 @@ class TemplateRead(BaseModel):
     updated_by_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    archived_at: datetime | None
+    archived_by_id: uuid.UUID | None
     current_version: TemplateVersionRead
 
 
@@ -175,7 +207,10 @@ class TemplateSummary(BaseModel):
     name: str
     description: str | None
     version_number: int
-    status: TemplateVersionStatus
+    status: Literal["draft", "published", "archived"]
     lock_version: int
     published_at: datetime | None
+    created_by_id: uuid.UUID
+    created_by_name: str
+    archived_at: datetime | None
     updated_at: datetime

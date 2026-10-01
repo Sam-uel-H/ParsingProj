@@ -21,6 +21,8 @@ vi.mock('../../api/templates', () => ({
   createTemplate: vi.fn(),
   updateTemplateDraft: vi.fn(),
   publishTemplate: vi.fn(),
+  createTemplateVersion: vi.fn(),
+  reorderTemplateColumns: vi.fn(),
 }))
 
 import { listDomains } from '../../api/domains'
@@ -40,6 +42,8 @@ function detail(status: 'draft' | 'published' = 'draft'): TemplateDetail {
     updated_by_id: 'user-1',
     created_at: '2026-08-23T12:00:00Z',
     updated_at: '2026-08-23T12:00:00Z',
+    archived_at: null,
+    archived_by_id: null,
     current_version: {
       id: 'version-1',
       version_number: 1,
@@ -135,7 +139,7 @@ describe('TemplateEditorPage', () => {
     renderEditor()
 
     expect(await screen.findByLabelText('Template name')).toBeDisabled()
-    expect(screen.getByText(/published and is read-only/i)).toBeVisible()
+    expect(screen.getByText(/published version is immutable/i)).toBeVisible()
     expect(
       screen.queryByRole('button', { name: 'Save draft' }),
     ).not.toBeInTheDocument()

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,21 +30,43 @@ from app.parsing.schemas import ParsingJobCreate, ParsingJobRead, ParsingResultR
 from app.parsing.validators import validate_value
 from app.providers.errors import ProviderError
 from app.providers.llm import ExtractionRequest, LLMColumn, LLMProvider
-from app.templates.models import Template, TemplateColumn, TemplateVersion, TemplateVersionStatus
+from app.templates.models import (
+    ColumnType,
+    Template,
+    TemplateColumn,
+    TemplateVersion,
+    TemplateVersionStatus,
+)
+
+
+def _json_value(value: str | None, column_type: ColumnType) -> str | int | bool | None:
+    if value is None:
+        return None
+    if column_type == ColumnType.INTEGER:
+        return int(value)
+    if column_type == ColumnType.BOOLEAN:
+        return value == "true"
+    if column_type in {ColumnType.DECIMAL, ColumnType.CURRENCY}:
+        return str(Decimal(value))
+    return value
 
 
 def _read_job(db: Session, job: ParsingJob) -> ParsingJobRead:
-    results = list(
-        db.scalars(
-            select(ParsingResult)
+    version = db.get(TemplateVersion, job.template_version_id)
+    if version is None:
+        raise NotFoundError("Template version")
+    rows = list(
+        db.execute(
+            select(ParsingResult, TemplateColumn)
+            .join(TemplateColumn, TemplateColumn.id == ParsingResult.template_column_id)
             .where(ParsingResult.parsing_job_id == job.id)
-            .order_by(ParsingResult.id)
+            .order_by(TemplateColumn.display_order)
         )
     )
-    columns = {column.id: column for column in db.scalars(select(TemplateColumn))}
     return ParsingJobRead(
         id=job.id,
         document_id=job.document_id,
+        template_id=version.template_id,
         template_version_id=job.template_version_id,
         status=job.status,
         domain_override=job.domain_override,
@@ -52,15 +77,22 @@ def _read_job(db: Session, job: ParsingJob) -> ParsingJobRead:
             ParsingResultRead(
                 id=result.id,
                 template_column_id=result.template_column_id,
-                column_name=columns[result.template_column_id].name,
+                column_name=column.name,
+                column_type=column.column_type,
+                enum_values=column.enum_values,
                 raw_output=result.raw_output,
                 canonical_value=result.canonical_value,
+                reviewed_value=result.reviewed_value,
+                current_value=result.reviewed_value or result.canonical_value,
                 validation_status=result.validation_status,
                 validation_message=result.validation_message,
                 confidence=result.confidence,
                 retry_count=result.retry_count,
+                human_verified=result.human_verified,
+                reviewed_by_id=result.reviewed_by_id,
+                reviewed_at=result.reviewed_at,
             )
-            for result in results
+            for result, column in rows
         ],
     )
 
@@ -79,6 +111,8 @@ async def run_job(
         raise NotFoundError("Document")
     if template is None:
         raise NotFoundError("Template")
+    if template.archived_at is not None:
+        raise BusinessValidationError("Archived templates cannot start new parsing jobs.")
     version = db.scalar(
         select(TemplateVersion)
         .where(
@@ -205,3 +239,83 @@ def get_job(db: Session, job_id: uuid.UUID) -> ParsingJobRead:
     if job is None:
         raise NotFoundError("Parsing job")
     return _read_job(db, job)
+
+
+def get_job_results(db: Session, job_id: uuid.UUID) -> list[ParsingResultRead]:
+    return get_job(db, job_id).results
+
+
+def correct_result(
+    db: Session,
+    job_id: uuid.UUID,
+    result_id: uuid.UUID,
+    value: object,
+    actor: User,
+) -> ParsingResultRead:
+    result = db.get(ParsingResult, result_id)
+    if result is None or result.parsing_job_id != job_id:
+        raise NotFoundError("Parsing result")
+    column = db.get(TemplateColumn, result.template_column_id)
+    if column is None:
+        raise NotFoundError("Template column")
+    canonical, message = validate_value(value, column.column_type, column.enum_values)
+    if message is not None:
+        raise BusinessValidationError(message)
+    result.reviewed_value = canonical
+    result.human_verified = True
+    result.reviewed_by_id = actor.id
+    result.reviewed_at = datetime.now(UTC)
+    result.validation_status = ResultValidationStatus.VALID
+    result.validation_message = None
+    remaining_review = db.scalar(
+        select(ParsingResult.id)
+        .where(
+            ParsingResult.parsing_job_id == job_id,
+            ParsingResult.id != result_id,
+            ParsingResult.validation_status == ResultValidationStatus.NEEDS_REVIEW,
+        )
+        .limit(1)
+    )
+    job = db.get(ParsingJob, job_id)
+    if job is not None and job.status in {
+        ParsingJobStatus.COMPLETED,
+        ParsingJobStatus.COMPLETED_WITH_WARNINGS,
+    }:
+        job.status = (
+            ParsingJobStatus.COMPLETED_WITH_WARNINGS
+            if remaining_review is not None
+            else ParsingJobStatus.COMPLETED
+        )
+    db.commit()
+    return next(item for item in get_job_results(db, job_id) if item.id == result_id)
+
+
+def export_job_csv(db: Session, job_id: uuid.UUID) -> str:
+    results = get_job_results(db, job_id)
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow([result.column_name for result in results])
+    writer.writerow([result.current_value or "" for result in results])
+    return output.getvalue()
+
+
+def export_job_json(db: Session, job_id: uuid.UUID) -> dict[str, object]:
+    job = get_job(db, job_id)
+    return {
+        "job_id": str(job.id),
+        "document_id": str(job.document_id),
+        "template_id": str(job.template_id),
+        "template_version_id": str(job.template_version_id),
+        "results": [
+            {
+                "template_column_id": str(result.template_column_id),
+                "column_name": result.column_name,
+                "column_type": result.column_type,
+                "value": _json_value(result.current_value, result.column_type),
+                "validation_status": result.validation_status,
+                "human_verified": result.human_verified,
+                "reviewed_at": result.reviewed_at.isoformat() if result.reviewed_at else None,
+            }
+            for result in job.results
+        ],
+    }

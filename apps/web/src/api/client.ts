@@ -1,4 +1,5 @@
 export interface ApiErrorBody {
+  request_id?: string
   error?: {
     code?: string
     message?: string
@@ -12,13 +13,14 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string = 'api_error',
     public readonly details?: unknown,
+    public readonly requestId?: string,
   ) {
     super(message)
     this.name = 'ApiError'
   }
 }
 
-function apiUrl(path: string): string {
+export function apiUrl(path: string): string {
   const base = import.meta.env.VITE_API_BASE_URL ?? '/api'
   return `${base.replace(/\/$/, '')}${path}`
 }
@@ -45,8 +47,12 @@ export async function apiRequest<T>(
       response.status,
       body.error?.code,
       body.error?.details,
+      body.request_id,
     )
   }
 
+  if (response.status === 204 || response.status === 205) {
+    return undefined as T
+  }
   return (await response.json()) as T
 }

@@ -4,7 +4,20 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UUIDPrimaryKeyMixin
@@ -29,6 +42,10 @@ class InvocationStatus(StrEnum):
 
 class ParsingJob(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "parsing_jobs"
+    __table_args__ = (
+        Index("ix_parsing_jobs_document_started", "document_id", "started_at"),
+        Index("ix_parsing_jobs_template_version_id", "template_version_id"),
+    )
 
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), nullable=False)
     template_version_id: Mapped[uuid.UUID] = mapped_column(
@@ -47,6 +64,21 @@ class ParsingJob(UUIDPrimaryKeyMixin, Base):
 
 class ParsingResult(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "parsing_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "parsing_job_id",
+            "template_column_id",
+            name="uq_parsing_results_parsing_job_id",
+        ),
+        CheckConstraint("retry_count >= 0", name="retry_count_nonnegative"),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="confidence_range",
+        ),
+        Index(
+            "ix_parsing_results_job_validation", "parsing_job_id", "validation_status"
+        ),
+    )
 
     parsing_job_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("parsing_jobs.id", ondelete="CASCADE"), nullable=False
@@ -62,10 +94,26 @@ class ParsingResult(UUIDPrimaryKeyMixin, Base):
     validation_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    reviewed_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    human_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reviewed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class LLMInvocation(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "llm_invocations"
+    __table_args__ = (
+        UniqueConstraint(
+            "parsing_job_id",
+            "template_column_id",
+            "attempt_number",
+            name="uq_llm_invocations_job_column_attempt",
+        ),
+        CheckConstraint("attempt_number >= 1", name="attempt_number_positive"),
+        Index("ix_llm_invocations_parsing_job_id", "parsing_job_id"),
+    )
 
     parsing_job_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("parsing_jobs.id", ondelete="CASCADE"), nullable=False

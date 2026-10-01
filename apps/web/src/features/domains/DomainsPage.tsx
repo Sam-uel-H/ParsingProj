@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   CardContent,
-  CircularProgress,
   Container,
   Stack,
   TextField,
@@ -14,6 +13,7 @@ import {
 
 import { createDomain, listDomains } from '../../api/domains'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
+import { EmptyState, LoadingState } from '../../components/AsyncState'
 
 export function DomainsPage() {
   const queryClient = useQueryClient()
@@ -73,6 +73,9 @@ export function DomainsPage() {
               inputProps={{ maxLength: 4000 }}
             />
             {create.isError && <ApiErrorAlert error={create.error} />}
+            {create.isSuccess && (
+              <Alert severity="success">Domain created successfully.</Alert>
+            )}
             <Button
               type="submit"
               variant="contained"
@@ -87,10 +90,10 @@ export function DomainsPage() {
       <Typography variant="h5" component="h2" sx={{ mb: 2 }}>
         Existing domains
       </Typography>
-      {domains.isPending && <CircularProgress aria-label="Loading domains" />}
+      {domains.isPending && <LoadingState label="Loading domains…" />}
       {domains.isError && <ApiErrorAlert error={domains.error} />}
       {domains.isSuccess && domains.data.length === 0 && (
-        <Alert severity="info">No domains have been created yet.</Alert>
+        <EmptyState message="No domains have been created yet." />
       )}
       {domains.isSuccess && (
         <Stack spacing={2}>

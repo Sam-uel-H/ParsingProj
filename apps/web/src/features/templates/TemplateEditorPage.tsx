@@ -7,19 +7,24 @@ import {
   CardContent,
   CircularProgress,
   Container,
+  IconButton,
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material'
+import { ArrowDown, ArrowUp, History, Plus, Tags } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { listDomains, type Domain } from '../../api/domains'
 import {
   createTemplate,
+  createTemplateVersion,
   getTemplate,
   publishTemplate,
+  reorderTemplateColumns,
   updateTemplateDraft,
   type ColumnType,
   type TemplateColumnDraft,
@@ -144,6 +149,9 @@ function EditorForm({ domains, detail }: EditorFormProps) {
   const [errors, setErrors] = useState<EditorErrors>({})
   const [dirty, setDirty] = useState(false)
   const published = version?.status === 'published'
+  const archived =
+    detail?.archived_at !== null && detail?.archived_at !== undefined
+  const readOnly = published || archived
 
   const acceptResult = (result: TemplateDetail) => {
     queryClient.setQueryData(['template', result.id], result)
@@ -190,6 +198,21 @@ function EditorForm({ domains, detail }: EditorFormProps) {
     onSuccess: acceptResult,
   })
 
+  const createVersion = useMutation({
+    mutationFn: () => createTemplateVersion(detail!.id),
+    onSuccess: acceptResult,
+  })
+
+  const reorder = useMutation({
+    mutationFn: (orderedColumns: EditorColumn[]) =>
+      reorderTemplateColumns(
+        detail!.id,
+        version!.lock_version,
+        orderedColumns.map((column) => column.id!),
+      ),
+    onSuccess: acceptResult,
+  })
+
   const markChanged = () => setDirty(true)
   const updateColumn = (index: number, change: Partial<EditorColumn>) => {
     setColumns((current) =>
@@ -225,26 +248,72 @@ function EditorForm({ domains, detail }: EditorFormProps) {
     markChanged()
   }
 
+  const moveColumn = (index: number, direction: -1 | 1) => {
+    const destination = index + direction
+    if (destination < 0 || destination >= columns.length) return
+    const next = [...columns]
+    ;[next[index], next[destination]] = [next[destination], next[index]]
+    const ordered = next.map((column, displayOrder) => ({
+      ...column,
+      displayOrder,
+    }))
+    if (detail && !dirty && ordered.every((column) => column.id)) {
+      reorder.mutate(ordered)
+      return
+    }
+    setColumns(ordered)
+    markChanged()
+  }
+
   const visibleError = (error: Error | null): Error | null =>
     error instanceof Error && error.message === 'form-invalid' ? null : error
 
   return (
     <Stack spacing={3}>
-      {published && (
+      {archived && (
         <Alert severity="info">
-          This version was published and is read-only. Creating a new version is
-          intentionally deferred to Phase 8.
+          This template is archived and remains available only for historical
+          jobs and version review.
+        </Alert>
+      )}
+      {published && !archived && (
+        <Alert severity="info">
+          This published version is immutable. Create a new version to make
+          changes.
         </Alert>
       )}
       {visibleError(save.error) && <ApiErrorAlert error={save.error} />}
       {visibleError(publish.error) && <ApiErrorAlert error={publish.error} />}
+      {createVersion.error && <ApiErrorAlert error={createVersion.error} />}
+      {reorder.error && <ApiErrorAlert error={reorder.error} />}
+      {detail && (
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button
+            component={Link}
+            to={`/templates/${detail.id}/history`}
+            startIcon={<History size={18} />}
+          >
+            Version history
+          </Button>
+          {published && !archived && (
+            <Button
+              variant="contained"
+              startIcon={<Plus size={18} />}
+              disabled={createVersion.isPending}
+              onClick={() => createVersion.mutate()}
+            >
+              Create new version
+            </Button>
+          )}
+        </Stack>
+      )}
       <Card variant="outlined">
         <CardContent>
           <Stack spacing={2}>
             <TextField
               label="Template name"
               value={name}
-              disabled={published}
+              disabled={readOnly}
               error={Boolean(errors.name)}
               helperText={errors.name}
               onChange={(event) => {
@@ -256,7 +325,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
               select
               label="Domain"
               value={domainId}
-              disabled={published}
+              disabled={readOnly}
               error={Boolean(errors.domain)}
               helperText={errors.domain}
               onChange={(event) => {
@@ -273,7 +342,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
             <TextField
               label="Description"
               value={description}
-              disabled={published}
+              disabled={readOnly}
               multiline
               minRows={2}
               onChange={(event) => {
@@ -296,7 +365,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
             </Typography>
           )}
         </Box>
-        {!published && <Button onClick={addColumn}>Add column</Button>}
+        {!readOnly && <Button onClick={addColumn}>Add column</Button>}
       </Stack>
 
       {columns.map((column, index) => (
@@ -307,7 +376,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
                 <TextField
                   label="Column name"
                   value={column.name}
-                  disabled={published}
+                  disabled={readOnly}
                   fullWidth
                   error={Boolean(errors[`column-${index}-name`])}
                   helperText={errors[`column-${index}-name`]}
@@ -319,7 +388,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
                   select
                   label="Type"
                   value={column.columnType}
-                  disabled={published}
+                  disabled={readOnly}
                   sx={{ minWidth: 180 }}
                   onChange={(event) =>
                     updateColumn(index, {
@@ -337,7 +406,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
               <TextField
                 label="Description"
                 value={column.description}
-                disabled={published}
+                disabled={readOnly}
                 onChange={(event) =>
                   updateColumn(index, { description: event.target.value })
                 }
@@ -346,7 +415,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
                 <TextField
                   label="Allowed values"
                   value={column.enumValues}
-                  disabled={published}
+                  disabled={readOnly}
                   error={Boolean(errors[`column-${index}-enum`])}
                   helperText={
                     errors[`column-${index}-enum`] ??
@@ -360,7 +429,7 @@ function EditorForm({ domains, detail }: EditorFormProps) {
               <TextField
                 label="Extraction prompt"
                 value={column.promptText}
-                disabled={published}
+                disabled={readOnly}
                 multiline
                 minRows={2}
                 error={Boolean(errors[`column-${index}-prompt`])}
@@ -372,17 +441,54 @@ function EditorForm({ domains, detail }: EditorFormProps) {
                   updateColumn(index, { promptText: event.target.value })
                 }
               />
-              {!published && (
-                <Button color="error" onClick={() => removeColumn(index)}>
-                  Delete column
+              {detail && column.id && (
+                <Button
+                  component={Link}
+                  to={`/templates/${detail.id}/prompt-helper?column=${column.id}`}
+                  startIcon={<Tags size={18} />}
+                  disabled={dirty}
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  Prompt Helper
                 </Button>
+              )}
+              {!readOnly && (
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Tooltip title="Move column up">
+                    <span>
+                      <IconButton
+                        aria-label={`Move ${column.name || 'column'} up`}
+                        disabled={index === 0 || reorder.isPending}
+                        onClick={() => moveColumn(index, -1)}
+                      >
+                        <ArrowUp size={19} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Move column down">
+                    <span>
+                      <IconButton
+                        aria-label={`Move ${column.name || 'column'} down`}
+                        disabled={
+                          index === columns.length - 1 || reorder.isPending
+                        }
+                        onClick={() => moveColumn(index, 1)}
+                      >
+                        <ArrowDown size={19} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Button color="error" onClick={() => removeColumn(index)}>
+                    Delete column
+                  </Button>
+                </Stack>
               )}
             </Stack>
           </CardContent>
         </Card>
       ))}
 
-      {!published && (
+      {!readOnly && (
         <Stack direction="row" spacing={2}>
           <Button
             variant="contained"

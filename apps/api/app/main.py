@@ -10,6 +10,7 @@ from app.api.router import api_router
 from app.common.errors import register_exception_handlers
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.middleware import request_context
 from app.db.session import close_database
 
 
@@ -25,9 +26,10 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title=settings.project_name,
         version=settings.app_version,
-        description="Document parsing system API through Phase 5.",
+        description="Document parsing system through Phase 8 template lifecycle.",
         lifespan=lifespan,
     )
+    application.middleware("http")(request_context)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

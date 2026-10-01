@@ -21,9 +21,27 @@ export function ParsingJobPage() {
   return (
     <Container maxWidth="md" component="main" sx={{ py: 6 }}>
       <Stack spacing={3}>
-        <Button component={Link} to="/parse">
-          Run another job
-        </Button>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+          <Button component={Link} to="/parse">
+            Run another job
+          </Button>
+          {job.data && (
+            <>
+              <Button
+                component={Link}
+                to={`/documents/${job.data.document_id}`}
+              >
+                View document
+              </Button>
+              <Button
+                component={Link}
+                to={`/templates/${job.data.template_id}`}
+              >
+                View template
+              </Button>
+            </>
+          )}
+        </Stack>
         <Typography variant="h3" component="h1">
           Parsing results
         </Typography>

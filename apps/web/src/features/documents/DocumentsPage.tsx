@@ -1,11 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import {
-  Alert,
   Button,
   Card,
   CardContent,
   Chip,
-  CircularProgress,
   Container,
   Stack,
   Typography,
@@ -15,6 +13,7 @@ import { Link } from 'react-router-dom'
 import { listDocuments } from '../../api/documents'
 import { listDomains } from '../../api/domains'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
+import { EmptyState, LoadingState } from '../../components/AsyncState'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -46,15 +45,19 @@ export function DocumentsPage() {
         </Button>
       </Stack>
       <Typography color="text.secondary" sx={{ mb: 4 }}>
-        Original files are stored safely while extraction remains pending for
-        Phase 4.
+        Upload source files, inspect extracted text, and continue into parsing.
       </Typography>
-      {documents.isPending && (
-        <CircularProgress aria-label="Loading documents" />
-      )}
+      {documents.isPending && <LoadingState label="Loading documents…" />}
       {documents.isError && <ApiErrorAlert error={documents.error} />}
       {documents.isSuccess && documents.data.length === 0 && (
-        <Alert severity="info">No documents have been uploaded yet.</Alert>
+        <EmptyState
+          message="No documents have been uploaded yet."
+          action={
+            <Button component={Link} to="/documents/upload" size="small">
+              Upload
+            </Button>
+          }
+        />
       )}
       {documents.isSuccess && (
         <Stack spacing={2}>
@@ -89,6 +92,15 @@ export function DocumentsPage() {
                 >
                   View details
                 </Button>
+                {document.processing_status === 'succeeded' && (
+                  <Button
+                    component={Link}
+                    to={`/parse?document=${document.id}`}
+                    sx={{ mt: 2 }}
+                  >
+                    Run parsing
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ))}

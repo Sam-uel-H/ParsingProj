@@ -104,7 +104,13 @@ describe('DocumentUploadPage', () => {
       screen.getByRole('button', { name: 'Upload selected files' }),
     )
 
-    expect(await screen.findByText('Upload stored successfully.')).toBeVisible()
+    expect(
+      await screen.findByText('Upload and extraction completed.'),
+    ).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Open document' })).toHaveAttribute(
+      'href',
+      '/documents/document-1',
+    )
     expect(await screen.findByText('Unsupported file.')).toBeVisible()
     await waitFor(() => expect(mockedUploadDocuments).toHaveBeenCalledTimes(2))
     expect(mockedUploadDocuments).toHaveBeenCalledWith(

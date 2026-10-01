@@ -1,0 +1,137 @@
+.prompt-helper-layout {
+  display: grid;
+  grid-template-columns: minmax(0, var(--split)) 8px minmax(0, 1fr);
+  min-height: 70vh;
+  border-top: 1px solid #d7dce0;
+  border-bottom: 1px solid #d7dce0;
+}
+
+.prompt-helper-source,
+.prompt-helper-columns {
+  min-width: 0;
+  padding: 16px;
+}
+
+.prompt-helper-source {
+  background: #f5f7f8;
+}
+
+.prompt-helper-divider {
+  background: #d7dce0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.prompt-helper-divider:focus-visible {
+  outline: 2px solid #007f77;
+  outline-offset: -2px;
+}
+
+.prompt-helper-page-scroll {
+  overflow: auto;
+  max-height: 72vh;
+}
+
+.prompt-helper-text-page {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 612px;
+  min-height: 792px;
+  margin: 0;
+  padding: 28px;
+  background: white;
+  white-space: pre;
+  font:
+    14px/1.6 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  user-select: text;
+}
+
+.prompt-helper-text-page mark {
+  background: #f6d97a;
+  color: inherit;
+}
+
+.prompt-pdf-page {
+  position: relative;
+  background: white;
+  user-select: text;
+}
+
+.prompt-pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  transform-origin: 0 0;
+}
+
+.prompt-pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.prompt-pdf-text-layer > :not(.markedContent),
+.prompt-pdf-text-layer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  font-size: calc(var(--total-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x));
+}
+
+.prompt-pdf-text-layer .markedContent {
+  display: contents;
+}
+
+.prompt-pdf-text-layer ::selection {
+  background: rgba(0, 127, 119, 0.25);
+}
+
+.prompt-tag-highlight {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  background: rgba(246, 217, 122, 0.38);
+  border-bottom: 2px solid #ba7410;
+}
+
+.prompt-helper-columns {
+  overflow-y: auto;
+  max-height: 80vh;
+}
+
+.prompt-helper-selection,
+.prompt-helper-current-tag {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #d7dce0;
+}
+
+.prompt-workspace {
+  min-width: 0;
+}
+
+.prompt-run-result {
+  padding: 12px 0;
+  border-top: 1px solid #d7dce0;
+  border-bottom: 1px solid #d7dce0;
+}
+
+@media (max-width: 900px) {
+  .prompt-helper-layout {
+    display: block;
+  }
+
+  .prompt-helper-divider {
+    display: none;
+  }
+
+  .prompt-helper-columns {
+    max-height: none;
+    border-top: 1px solid #d7dce0;
+  }
+}

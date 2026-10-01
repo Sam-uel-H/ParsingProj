@@ -3,7 +3,7 @@
 **Project:** Prompt-Driven Document Parsing and Template Extraction System  
 **Reference domain:** Agent Bank Interest and Payment Notices  
 **Status:** Canonical implementation roadmap  
-**Implementation status:** Not started  
+**Implementation status:** MVP complete through Phase 7; Phases 8-10 complete; Phases 11-14 not started
 **Source:** Requirements Specification version 1.0, dated August 17, 2026
 
 ---

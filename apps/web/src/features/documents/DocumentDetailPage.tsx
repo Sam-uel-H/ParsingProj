@@ -183,13 +183,24 @@ export function DocumentDetailPage() {
               </Paper>
             </Stack>
           )}
-          <Button
-            component="a"
-            href={documentContentUrl(document.data.id)}
-            variant="outlined"
-          >
-            Download original
-          </Button>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <Button
+              component="a"
+              href={documentContentUrl(document.data.id)}
+              variant="outlined"
+            >
+              Download original
+            </Button>
+            {document.data.processing_status === 'succeeded' && (
+              <Button
+                component={Link}
+                to={`/parse?document=${document.data.id}`}
+                variant="contained"
+              >
+                Run parsing
+              </Button>
+            )}
+          </Stack>
         </Stack>
       )}
     </Container>

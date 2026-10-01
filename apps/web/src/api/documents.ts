@@ -144,6 +144,7 @@ export function uploadDocuments(
             request.status,
             errorBody.error?.code,
             errorBody.error?.details,
+            errorBody.request_id,
           ),
         )
         return

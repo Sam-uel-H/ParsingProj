@@ -173,8 +173,22 @@ export function DocumentUploadPage() {
               )}
               {item.error !== undefined && <ApiErrorAlert error={item.error} />}
               {item.result?.success && (
-                <Alert severity="success" sx={{ mt: 1 }}>
-                  Upload stored successfully.
+                <Alert
+                  severity="success"
+                  sx={{ mt: 1 }}
+                  action={
+                    item.result.document ? (
+                      <Button
+                        component={Link}
+                        to={`/documents/${item.result.document.id}`}
+                        size="small"
+                      >
+                        Open document
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  Upload and extraction completed.
                 </Alert>
               )}
             </CardContent>

@@ -5,6 +5,8 @@ from app.documents.models import Document, DocumentExtraction, DocumentPage, Doc
 from app.domains.models import Domain
 from app.parsing.models import LLMInvocation, ParsingJob, ParsingResult
 from app.templates.models import Template, TemplateColumn, TemplateVersion
+from app.templates.prompt_models import PromptDraft
+from app.templates.tagged_models import TaggedExample
 
 __all__ = [
     "Document",
@@ -15,6 +17,8 @@ __all__ = [
     "Template",
     "TemplateColumn",
     "TemplateVersion",
+    "TaggedExample",
+    "PromptDraft",
     "User",
     "ParsingJob",
     "ParsingResult",

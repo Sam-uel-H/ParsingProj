@@ -107,13 +107,13 @@ def test_duplicate_column_name_returns_structured_conflict(phase1_client: TestCl
     )
 
     assert duplicate.status_code == 409
-    assert duplicate.json() == {
-        "error": {
-            "code": "conflict",
-            "message": "A column with this name already exists in the draft version.",
-            "details": {"field": "name"},
-        }
+    body = duplicate.json()
+    assert body["error"] == {
+        "code": "conflict",
+        "message": "A column with this name already exists in the draft version.",
+        "details": {"field": "name"},
     }
+    assert body["request_id"] == duplicate.headers["X-Request-ID"]
 
 
 def test_template_requires_a_real_domain_and_clear_validation(phase1_client: TestClient) -> None:

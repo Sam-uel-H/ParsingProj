@@ -12,7 +12,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import { listDocuments } from '../../api/documents'
 import { runParsingJob } from '../../api/parsing'
@@ -21,8 +21,13 @@ import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { ParsingResults } from './ParsingResults'
 
 export function RunParsingPage() {
-  const [documentId, setDocumentId] = useState('')
-  const [templateId, setTemplateId] = useState('')
+  const [searchParams] = useSearchParams()
+  const [documentId, setDocumentId] = useState(
+    searchParams.get('document') ?? '',
+  )
+  const [templateId, setTemplateId] = useState(
+    searchParams.get('template') ?? '',
+  )
   const [override, setOverride] = useState(false)
   const documents = useQuery({
     queryKey: ['documents'],
@@ -30,7 +35,7 @@ export function RunParsingPage() {
   })
   const templates = useQuery({
     queryKey: ['templates'],
-    queryFn: ({ signal }) => listTemplates(signal),
+    queryFn: ({ signal }) => listTemplates({ status: 'published' }, signal),
   })
   const job = useMutation({
     mutationFn: () =>
@@ -52,10 +57,28 @@ export function RunParsingPage() {
         Run parsing
       </Typography>
       <Stack spacing={3}>
+        {documents.isPending || templates.isPending ? (
+          <CircularProgress aria-label="Loading parsing options" />
+        ) : null}
+        {documents.error && <ApiErrorAlert error={documents.error} />}
+        {templates.error && <ApiErrorAlert error={templates.error} />}
+        {documents.isSuccess && eligibleDocuments.length === 0 && (
+          <Alert severity="info">
+            No extracted documents are ready.{' '}
+            <Link to="/documents/upload">Upload a document</Link> first.
+          </Alert>
+        )}
+        {templates.isSuccess && publishedTemplates.length === 0 && (
+          <Alert severity="info">
+            No published templates are ready.{' '}
+            <Link to="/templates/new">Create a template</Link> first.
+          </Alert>
+        )}
         <TextField
           select
           label="Extracted document"
           value={documentId}
+          disabled={documents.isPending || eligibleDocuments.length === 0}
           onChange={(event) => setDocumentId(event.target.value)}
         >
           {eligibleDocuments.map((item) => (
@@ -68,6 +91,7 @@ export function RunParsingPage() {
           select
           label="Published template"
           value={templateId}
+          disabled={templates.isPending || publishedTemplates.length === 0}
           onChange={(event) => setTemplateId(event.target.value)}
         >
           {publishedTemplates.map((item) => (
