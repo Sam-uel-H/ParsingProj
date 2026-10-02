@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.core.config import get_settings
+from app.core.config import Settings
 from app.db.session import SessionFactory
 from app.domains.models import Domain
 from app.seed import SEED_DOMAIN_NAME, SEED_TEMPLATE_NAME, seed_development_data
@@ -15,8 +16,12 @@ def test_development_seed_is_synthetic_published_and_idempotent(
 ) -> None:
     del phase1_client
     with SessionFactory() as db:
-        first = seed_development_data(db, get_settings())
-        second = seed_development_data(db, get_settings())
+        with pytest.raises(RuntimeError, match="only be created in development"):
+            seed_development_data(db, Settings(_env_file=None, environment="test"))
+
+        development_settings = Settings(_env_file=None, environment="development")
+        first = seed_development_data(db, development_settings)
+        second = seed_development_data(db, development_settings)
 
         assert first.created_domain is True
         assert first.created_template is True
