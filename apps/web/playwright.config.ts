@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 const apiCommand =
   process.platform === 'win32'
     ? '"..\\api\\.venv\\Scripts\\python.exe" -m uvicorn app.main:app --app-dir "..\\api" --host 127.0.0.1 --port 8000'
-    : 'python -m uvicorn app.main:app --app-dir ../api --host 127.0.0.1 --port 8000'
+    : '../api/.venv/bin/python -m uvicorn app.main:app --app-dir ../api --host 127.0.0.1 --port 8000'
 
 export default defineConfig({
   testDir: './e2e',
