@@ -5,6 +5,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_development_user
@@ -12,10 +13,10 @@ from app.auth.models import User
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.documents import extraction_service, service
-from app.documents.dependencies import get_document_extractor, get_object_storage
-from app.documents.models import Document
+from app.documents.dependencies import get_object_storage
+from app.documents.models import Document, DocumentExtraction
 from app.documents.schemas import DocumentExtractionRead, DocumentRead, DocumentUploadBatch
-from app.providers.document_extraction import DocumentExtractionProvider
+from app.jobs.dispatch import Dispatcher, get_dispatcher
 from app.providers.object_storage import ObjectStorage
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -79,20 +80,48 @@ async def get_document_content(
 @router.post(
     "/{document_id}/extract",
     response_model=DocumentExtractionRead,
-    summary="Extract a pending document",
+    summary="Queue extraction of a pending document",
 )
 async def extract_document(
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
     _: User = Depends(get_development_user),
-    storage: ObjectStorage = Depends(get_object_storage),
-    provider: DocumentExtractionProvider = Depends(get_document_extractor),
+    dispatch: Dispatcher = Depends(get_dispatcher),
     settings: Settings = Depends(get_settings),
 ) -> DocumentExtractionRead:
-    await extraction_service.run_extraction(
-        db, document_id, storage, provider, settings.extraction_timeout_seconds
-    )
+    task = extraction_service.queue_extraction(db, document_id, settings.job_max_attempts)
+    await dispatch(task.id)
+    db.expire_all()
     return extraction_service.get_active_extraction(db, document_id)
+
+
+@router.post("/{document_id}/reprocess", response_model=DocumentExtractionRead)
+async def reprocess_document(
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_development_user),
+    dispatch: Dispatcher = Depends(get_dispatcher),
+    settings: Settings = Depends(get_settings),
+) -> DocumentExtractionRead:
+    task = extraction_service.queue_extraction(
+        db, document_id, settings.job_max_attempts, reprocess=True
+    )
+    await dispatch(task.id)
+    db.expire_all()
+    return extraction_service.get_active_extraction(db, document_id)
+
+
+@router.get("/{document_id}/extractions", response_model=list[DocumentExtractionRead])
+def extraction_history(
+    document_id: uuid.UUID, db: Session = Depends(get_db)
+) -> list[DocumentExtractionRead]:
+    service.get_document(db, document_id)
+    ids = db.scalars(
+        select(DocumentExtraction.id)
+        .where(DocumentExtraction.document_id == document_id)
+        .order_by(DocumentExtraction.version_number.desc())
+    )
+    return [extraction_service.get_active_extraction(db, document_id, item) for item in ids]
 
 
 @router.get(
@@ -100,19 +129,24 @@ async def extract_document(
     response_model=DocumentExtractionRead,
     summary="Get the active document extraction",
 )
-def get_extraction(document_id: uuid.UUID, db: Session = Depends(get_db)) -> DocumentExtractionRead:
-    return extraction_service.get_active_extraction(db, document_id)
+def get_extraction(
+    document_id: uuid.UUID,
+    extraction_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+) -> DocumentExtractionRead:
+    return extraction_service.get_active_extraction(db, document_id, extraction_id)
 
 
 @router.get("/{document_id}/pages/{page_number}/preview", summary="Preview a document page")
 async def get_page_preview(
     document_id: uuid.UUID,
     page_number: int,
+    extraction_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(get_development_user),
     storage: ObjectStorage = Depends(get_object_storage),
 ) -> Response:
-    page = extraction_service.get_page(db, document_id, page_number)
+    page = extraction_service.get_page(db, document_id, page_number, extraction_id)
     return Response(
         content=await storage.get(page.preview_object_key),
         media_type=page.preview_content_type,

@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     extraction_timeout_seconds: float = Field(default=30.0, gt=0)
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
     validation_retry_limit: int = Field(default=2, ge=0, le=10)
+    redis_url: str = "redis://localhost:6379/0"
+    job_max_attempts: int = Field(default=4, ge=1, le=10)
+    job_retry_base_seconds: float = Field(default=2, gt=0)
+    job_retry_max_seconds: float = Field(default=300, gt=0)
+    parsing_concurrency: int = Field(default=4, ge=1, le=16)
+    parsing_strategy: Literal["per_column", "batch"] = "per_column"
+    parsing_batch_size: int = Field(default=5, ge=1, le=20)
+    parsing_context_characters: int = Field(default=100_000, ge=4096)
+    performance_sla_seconds: float = Field(default=30, gt=0)
     llm_provider: Literal["fake"] = "fake"
     document_extraction_provider: Literal["local"] = "local"
     object_storage_provider: Literal["filesystem"] = "filesystem"

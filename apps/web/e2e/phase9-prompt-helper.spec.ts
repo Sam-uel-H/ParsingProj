@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { waitForExtraction } from './helpers'
 
 const api = 'http://127.0.0.1:8000'
 
@@ -85,6 +86,7 @@ test('tags, reloads, replaces, and deletes spans on multiple text pages', async 
     (await request.post(`${api}/documents/${documentId}/extract`)).ok(),
   ).toBeTruthy()
 
+  await waitForExtraction(request, documentId)
   await page.goto(`/templates/${template.id}`)
   await page.getByRole('link', { name: 'Prompt Helper' }).first().click()
   await expect(
@@ -163,9 +165,8 @@ test('renders a selectable PDF text layer and maps its selection', async ({
     })
   ).json()
   const documentId = upload.results[0].document.id as string
-  const extraction = await (
-    await request.post(`${api}/documents/${documentId}/extract`)
-  ).json()
+  await request.post(`${api}/documents/${documentId}/extract`)
+  const extraction = await waitForExtraction(request, documentId)
   expect(extraction.full_text).toContain('UniqueCodePhaseNine42')
 
   await page.goto(

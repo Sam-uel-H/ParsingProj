@@ -11,6 +11,7 @@ import {
 import { Link } from 'react-router-dom'
 
 import { listDocuments } from '../../api/documents'
+import { isJobActive } from '../../api/jobs'
 import { listDomains } from '../../api/domains'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { EmptyState, LoadingState } from '../../components/AsyncState'
@@ -25,6 +26,10 @@ export function DocumentsPage() {
   const documents = useQuery({
     queryKey: ['documents'],
     queryFn: ({ signal }) => listDocuments(signal),
+    refetchInterval: (query) =>
+      query.state.data?.some((item) => isJobActive(item.processing_status))
+        ? 1000
+        : false,
   })
   const domains = useQuery({
     queryKey: ['domains'],

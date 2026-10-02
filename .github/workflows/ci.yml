@@ -8,6 +8,15 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       postgres:
         image: postgres:17-alpine
         env:
@@ -26,6 +35,7 @@ jobs:
       TEST_DATABASE_URL: postgresql+psycopg://parsing:parsing@localhost:5432/parsing_test
       ENVIRONMENT: test
       OBJECT_STORAGE_PATH: ${{ github.workspace }}/.ci-storage
+      REDIS_URL: redis://localhost:6379/0
 
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +63,12 @@ jobs:
           .venv/bin/pyright
           .venv/bin/pytest
 
+      - name: Verify worker and API crash recovery
+        working-directory: apps/api
+        env:
+          RUN_WORKER_TESTS: '1'
+        run: .venv/bin/pytest tests/integration/test_phase11_worker.py
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -77,4 +93,20 @@ jobs:
 
       - name: Run MVP acceptance test
         working-directory: apps/web
-        run: npm run test:e2e
+        run: |
+          ../api/.venv/bin/celery --workdir ../api -A app.jobs.celery_app worker --concurrency=2 --loglevel=warning > /tmp/parsing-worker.log 2>&1 &
+          WORKER_PID=$!
+          ../api/.venv/bin/celery --workdir ../api -A app.jobs.celery_app beat --loglevel=warning > /tmp/parsing-beat.log 2>&1 &
+          BEAT_PID=$!
+          trap 'kill "$WORKER_PID" "$BEAT_PID" || true' EXIT
+          npm run test:e2e
+
+      - name: Upload browser and worker diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-diagnostics
+          path: |
+            apps/web/test-results/
+            /tmp/parsing-worker.log
+            /tmp/parsing-beat.log

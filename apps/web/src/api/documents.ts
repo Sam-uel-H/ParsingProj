@@ -1,4 +1,5 @@
 import { ApiError, apiRequest, type ApiErrorBody } from './client'
+import type { TaskProgress } from './jobs'
 
 export type DocumentFileType = 'pdf' | 'docx' | 'tiff' | 'png' | 'jpeg' | 'text'
 
@@ -11,7 +12,8 @@ export interface DocumentRecord {
   file_size: number
   checksum_sha256: string
   upload_status: 'stored'
-  processing_status: 'pending' | 'processing' | 'succeeded' | 'failed'
+  processing_status:
+    'pending' | 'queued' | 'processing' | 'succeeded' | 'failed'
   uploaded_by_id: string
   uploaded_at: string
   active_extraction_id: string | null
@@ -40,7 +42,9 @@ export interface DocumentPageRecord {
 export interface DocumentExtractionRecord {
   id: string
   document_id: string
-  status: 'processing' | 'succeeded' | 'failed'
+  status: 'queued' | 'processing' | 'succeeded' | 'failed'
+  version_number?: number
+  progress?: TaskProgress | null
   provider_name: string | null
   provider_version: string | null
   full_text: string | null
@@ -96,9 +100,10 @@ export function extractDocument(
 export function getDocumentExtraction(
   documentId: string,
   signal?: AbortSignal,
+  extractionId?: string,
 ): Promise<DocumentExtractionRecord> {
   return apiRequest<DocumentExtractionRecord>(
-    `/documents/${documentId}/extraction`,
+    `/documents/${documentId}/extraction${extractionId ? `?extraction_id=${extractionId}` : ''}`,
     { signal },
   )
 }
@@ -106,8 +111,30 @@ export function getDocumentExtraction(
 export function documentPagePreviewUrl(
   documentId: string,
   pageNumber: number,
+  extractionId?: string,
 ): string {
-  return apiUrl(`/documents/${documentId}/pages/${pageNumber}/preview`)
+  return apiUrl(
+    `/documents/${documentId}/pages/${pageNumber}/preview${extractionId ? `?extraction_id=${extractionId}` : ''}`,
+  )
+}
+
+export function reprocessDocument(
+  documentId: string,
+): Promise<DocumentExtractionRecord> {
+  return apiRequest<DocumentExtractionRecord>(
+    `/documents/${documentId}/reprocess`,
+    { method: 'POST' },
+  )
+}
+
+export function listExtractions(
+  documentId: string,
+  signal?: AbortSignal,
+): Promise<DocumentExtractionRecord[]> {
+  return apiRequest<DocumentExtractionRecord[]>(
+    `/documents/${documentId}/extractions`,
+    { signal },
+  )
 }
 
 export function uploadDocuments(

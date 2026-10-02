@@ -17,6 +17,7 @@ which can be dry-run, compared with expected values, and accepted into a draft t
 - Node.js 20 or newer
 - Python 3.12 or newer
 - Docker Desktop with Docker Compose (for PostgreSQL)
+- Linux worker runtime (Docker Desktop/WSL2 on Windows) for Celery and Redis
 
 A native PostgreSQL 17 installation can be used instead of Docker when it exposes the databases
 and credentials configured in `.env`.
@@ -28,7 +29,7 @@ From the repository root:
 ```powershell
 Copy-Item .env.example .env
 
-docker compose -f infra/docker-compose.yml up -d postgres
+docker compose -f infra/docker-compose.yml up -d postgres redis
 
 cd apps/api
 python -m venv .venv
@@ -41,6 +42,28 @@ cd ../web
 npm install
 npx playwright install chromium
 ```
+
+After migration, start the background services from the repository root:
+
+```powershell
+docker compose -f infra/docker-compose.yml up -d --build worker beat
+```
+
+If PostgreSQL runs natively on Windows, start Redis first, set `WORKER_DATABASE_URL` to the local
+database URL using host `host.docker.internal`, and use `up -d --build --no-deps worker beat`.
+The native PostgreSQL server must accept connections from Docker; do not replace an existing data
+directory. The API and worker must share the same database and `.local-storage` directory.
+
+On a Linux host with Redis available, workers can run directly from `apps/api`:
+
+```sh
+.venv/bin/celery -A app.jobs.celery_app worker --concurrency=2 --loglevel=info
+.venv/bin/celery -A app.jobs.celery_app beat --loglevel=info
+```
+
+Run these in separate terminals, with exactly one Beat scheduler. On Windows, complete WSL2/Docker
+Desktop installation before starting these services. The API can start without Redis, but submitted
+work stays queued until the worker and scheduler are available.
 
 The development credentials in `infra/docker-compose.yml` are local-only defaults. Do not
 reuse them in a deployed environment.
@@ -66,6 +89,13 @@ Agent Bank Notice template without documents, secrets, or production data.
 | `EXTRACTION_TIMEOUT_SECONDS` | `30` | Extraction provider timeout |
 | `LLM_TIMEOUT_SECONDS` | `30` | LLM provider timeout |
 | `VALIDATION_RETRY_LIMIT` | `2` | Invalid extraction retries |
+| `REDIS_URL` | `redis://localhost:6379/0` | Celery broker |
+| `JOB_MAX_ATTEMPTS` | `4` | Worker/provider recovery attempts |
+| `JOB_RETRY_BASE_SECONDS` / `JOB_RETRY_MAX_SECONDS` | `2` / `300` | Exponential retry backoff |
+| `PARSING_CONCURRENCY` | `4` | Concurrent provider calls per job |
+| `PARSING_STRATEGY` / `PARSING_BATCH_SIZE` | `per_column` / `5` | Default parsing strategy |
+| `PARSING_CONTEXT_CHARACTERS` | `100000` | Context and prompt character budget |
+| `PERFORMANCE_SLA_SECONDS` | `30` | 20-column/10-page acceptance target |
 | `LLM_PROVIDER` | `fake` | Deterministic local parsing provider |
 | `DOCUMENT_EXTRACTION_PROVIDER` | `local` | Local extraction implementation |
 | `OBJECT_STORAGE_PROVIDER` | `filesystem` | Local storage implementation |
@@ -194,6 +224,9 @@ npm run test:e2e
 ```
 
 The Playwright suite starts the API and frontend automatically when they are not already running.
+Redis, a Celery worker, and Beat must already be running against the same test database and storage.
+Linux CI also runs `RUN_WORKER_TESTS=1 .venv/bin/pytest tests/integration/test_phase11_worker.py`
+to verify recovery after worker/API process termination using real Redis.
 It performs the full synthetic Agent Bank Notice workflow and verifies empty and API failure states.
 
 Database readiness:
@@ -219,8 +252,13 @@ apps/api/tests/           API and provider contract tests
 apps/web/src/features/    Domain, template, and document browser workflows
 docs/architecture/        Decisions that constrain each completed phase
 docs/known-limitations.md  Explicit MVP boundaries and deferred capabilities
-infra/docker-compose.yml  Local PostgreSQL service
+infra/docker-compose.yml  PostgreSQL, Redis, Celery worker, and Beat services
 ```
+
+Phase 11 queues extraction and parsing immediately. Saved job pages poll durable progress, and the
+Run Parsing page lists recent jobs. Reprocess Extraction creates a new version; the version selector
+can inspect previous text and previews. Existing parsing jobs retain their original extraction.
+Retries resume unfinished columns. Review and exports become available when the job completes.
 
 See `docs/architecture/` for the architecture choices made so far and the decisions intentionally
 left for later phases. See `docs/known-limitations.md` before treating the MVP as a production

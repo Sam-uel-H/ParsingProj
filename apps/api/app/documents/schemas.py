@@ -11,6 +11,7 @@ from app.documents.models import (
     DocumentUploadStatus,
     ExtractionStatus,
 )
+from app.jobs.schemas import TaskProgress
 
 
 class DocumentRead(BaseModel):
@@ -62,6 +63,8 @@ class DocumentExtractionRead(BaseModel):
     started_at: datetime
     completed_at: datetime | None
     pages: list[DocumentPageRead]
+    version_number: int = 1
+    progress: TaskProgress | None = None
 
 
 class UploadErrorRead(BaseModel):

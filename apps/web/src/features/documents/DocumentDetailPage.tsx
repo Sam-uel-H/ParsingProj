@@ -8,6 +8,8 @@ import {
   CircularProgress,
   Container,
   Paper,
+  MenuItem,
+  TextField,
   Stack,
   Typography,
 } from '@mui/material'
@@ -20,7 +22,11 @@ import {
   extractDocument,
   getDocument,
   getDocumentExtraction,
+  listExtractions,
+  reprocessDocument,
 } from '../../api/documents'
+import { isJobActive } from '../../api/jobs'
+import { JobProgress } from '../../components/JobProgress'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 
 export function DocumentDetailPage() {
@@ -29,19 +35,42 @@ export function DocumentDetailPage() {
   const [pageNumber, setPageNumber] = useState(1)
   const [zoom, setZoom] = useState(100)
   const [mode, setMode] = useState<'preview' | 'text'>('preview')
+  const [extractionId, setExtractionId] = useState('')
   const document = useQuery({
     queryKey: ['document', documentId],
     queryFn: ({ signal }) => getDocument(documentId, signal),
+    refetchInterval: (query) =>
+      isJobActive(query.state.data?.processing_status) ? 1000 : false,
   })
   const extraction = useQuery({
-    queryKey: ['document-extraction', documentId],
-    queryFn: ({ signal }) => getDocumentExtraction(documentId, signal),
+    queryKey: ['document-extraction', documentId, extractionId],
+    queryFn: ({ signal }) =>
+      getDocumentExtraction(documentId, signal, extractionId || undefined),
+    enabled: Boolean(document.data?.active_extraction_id),
+    refetchInterval: (query) =>
+      isJobActive(query.state.data?.status) ? 1000 : false,
+  })
+  const history = useQuery({
+    queryKey: [
+      'extraction-history',
+      documentId,
+      document.data?.processing_status,
+    ],
+    queryFn: ({ signal }) => listExtractions(documentId, signal),
     enabled: Boolean(document.data?.active_extraction_id),
   })
   const startExtraction = useMutation({
-    mutationFn: () => extractDocument(documentId),
+    mutationFn: () =>
+      document.data?.processing_status === 'pending'
+        ? extractDocument(documentId)
+        : reprocessDocument(documentId),
     onSuccess: (result) => {
-      queryClient.setQueryData(['document-extraction', documentId], result)
+      setExtractionId('')
+      setPageNumber(1)
+      queryClient.setQueryData(['document-extraction', documentId, ''], result)
+      queryClient.invalidateQueries({
+        queryKey: ['extraction-history', documentId],
+      })
       queryClient.invalidateQueries({ queryKey: ['document', documentId] })
       queryClient.invalidateQueries({ queryKey: ['documents'] })
     },
@@ -88,14 +117,43 @@ export function DocumentDetailPage() {
               </Stack>
             </CardContent>
           </Card>
-          {document.data.processing_status === 'pending' && (
+          {!isJobActive(document.data.processing_status) && (
             <Button
               variant="contained"
               disabled={startExtraction.isPending}
               onClick={() => startExtraction.mutate()}
             >
-              {startExtraction.isPending ? 'Extracting…' : 'Start extraction'}
+              {startExtraction.isPending
+                ? 'Queuing…'
+                : document.data.processing_status === 'pending'
+                  ? 'Start extraction'
+                  : 'Reprocess extraction'}
             </Button>
+          )}
+          {history.data && history.data.length > 0 && (
+            <TextField
+              select
+              label="Extraction version"
+              value={extractionId}
+              onChange={(event) => {
+                setExtractionId(event.target.value)
+                setPageNumber(1)
+              }}
+            >
+              <MenuItem value="">Current extraction</MenuItem>
+              {history.data.map((item) => (
+                <MenuItem key={item.id} value={item.id}>
+                  Version {item.version_number} · {item.status}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
+          {extraction.error && <ApiErrorAlert error={extraction.error} />}
+          {extraction.data && isJobActive(extraction.data.status) && (
+            <JobProgress
+              status={extraction.data.progress?.state ?? extraction.data.status}
+              progress={extraction.data.progress}
+            />
           )}
           {startExtraction.error && (
             <ApiErrorAlert error={startExtraction.error} />
@@ -165,13 +223,17 @@ export function DocumentDetailPage() {
                 ) : currentPage.preview_content_type === 'application/pdf' ? (
                   <iframe
                     title={`Page ${pageNumber} preview`}
-                    src={`${documentPagePreviewUrl(documentId, pageNumber)}#page=${pageNumber}&zoom=${zoom}`}
+                    src={`${documentPagePreviewUrl(documentId, pageNumber, extraction.data.id)}#page=${pageNumber}&zoom=${zoom}`}
                     style={{ width: '100%', height: 700, border: 0 }}
                   />
                 ) : (
                   <img
                     alt={`Page ${pageNumber} preview`}
-                    src={documentPagePreviewUrl(documentId, pageNumber)}
+                    src={documentPagePreviewUrl(
+                      documentId,
+                      pageNumber,
+                      extraction.data.id,
+                    )}
                     style={{
                       width: `${zoom}%`,
                       height: 'auto',

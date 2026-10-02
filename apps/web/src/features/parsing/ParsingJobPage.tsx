@@ -9,6 +9,7 @@ import {
 import { Link, useParams } from 'react-router-dom'
 
 import { getParsingJob } from '../../api/parsing'
+import { isJobActive } from '../../api/jobs'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
 import { ParsingResults } from './ParsingResults'
 
@@ -17,6 +18,8 @@ export function ParsingJobPage() {
   const job = useQuery({
     queryKey: ['parsing-job', jobId],
     queryFn: ({ signal }) => getParsingJob(jobId, signal),
+    refetchInterval: (query) =>
+      isJobActive(query.state.data?.status) ? 1000 : false,
   })
   return (
     <Container maxWidth="md" component="main" sx={{ py: 6 }}>

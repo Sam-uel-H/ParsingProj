@@ -1,4 +1,5 @@
 import { apiRequest, apiUrl } from './client'
+import type { TaskProgress } from './jobs'
 
 export type ParsingColumnType =
   'string' | 'integer' | 'decimal' | 'currency' | 'date' | 'boolean' | 'enum'
@@ -27,7 +28,16 @@ export interface ParsingJob {
   document_id: string
   template_id: string
   template_version_id: string
-  status: 'running' | 'completed' | 'completed_with_warnings' | 'failed'
+  status:
+    | 'queued'
+    | 'parsing'
+    | 'running'
+    | 'completed'
+    | 'completed_with_warnings'
+    | 'failed'
+  document_extraction_id?: string | null
+  strategy?: string
+  progress?: TaskProgress | null
   domain_override: boolean
   started_by_id: string
   started_at: string
@@ -39,11 +49,17 @@ export function runParsingJob(data: {
   document_id: string
   template_id: string
   confirm_domain_override: boolean
+  idempotency_key?: string
+  strategy?: 'per_column' | 'batch'
 }): Promise<ParsingJob> {
   return apiRequest<ParsingJob>('/parsing-jobs', {
     method: 'POST',
     body: JSON.stringify(data),
   })
+}
+
+export function listParsingJobs(signal?: AbortSignal): Promise<ParsingJob[]> {
+  return apiRequest<ParsingJob[]>('/parsing-jobs', { signal })
 }
 
 export function getParsingJob(

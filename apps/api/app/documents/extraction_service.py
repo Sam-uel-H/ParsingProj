@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.common.errors import InvalidOperationError, NotFoundError
@@ -23,6 +23,8 @@ from app.documents.schemas import (
     DocumentPageRead,
     TextBlockRead,
 )
+from app.jobs.models import BackgroundTask
+from app.jobs.schemas import TaskProgress
 from app.providers.document_extraction import (
     DocumentExtractionProvider,
     DocumentExtractionRequest,
@@ -110,24 +112,67 @@ def _svg(page: CanonicalPage) -> bytes:
     return "".join(lines).encode()
 
 
-async def run_extraction(
+def queue_extraction(
     db: Session,
     document_id: uuid.UUID,
+    max_attempts: int,
+    *,
+    reprocess: bool = False,
+) -> BackgroundTask:
+    document = db.scalar(select(Document).where(Document.id == document_id).with_for_update())
+    if document is None:
+        raise NotFoundError("Document")
+    if document.processing_status in {
+        DocumentProcessingStatus.QUEUED,
+        DocumentProcessingStatus.PROCESSING,
+    }:
+        task = db.scalar(
+            select(BackgroundTask).where(
+                BackgroundTask.extraction_id == document.active_extraction_id
+            )
+        )
+        if task is not None:
+            db.commit()
+            return task
+        raise InvalidOperationError("An extraction is already running.")
+    if not reprocess and document.processing_status != DocumentProcessingStatus.PENDING:
+        raise InvalidOperationError("Use reprocess to create a new extraction version.")
+    version = (
+        db.scalar(
+            select(func.max(DocumentExtraction.version_number)).where(
+                DocumentExtraction.document_id == document.id
+            )
+        )
+        or 0
+    )
+    extraction = DocumentExtraction(
+        document_id=document.id, version_number=version + 1, status=ExtractionStatus.QUEUED
+    )
+    db.add(extraction)
+    db.flush()
+    document.active_extraction_id = extraction.id
+    document.processing_status = DocumentProcessingStatus.QUEUED
+    task = BackgroundTask(extraction_id=extraction.id, max_attempts=max_attempts, total_units=1)
+    db.add(task)
+    db.commit()
+    return task
+
+
+async def execute_extraction(
+    db: Session,
+    extraction_id: uuid.UUID,
     storage: ObjectStorage,
     provider: DocumentExtractionProvider,
     timeout_seconds: float,
 ) -> DocumentExtraction:
-    document = db.get(Document, document_id)
+    extraction = db.get(DocumentExtraction, extraction_id)
+    if extraction is None:
+        raise NotFoundError("Document extraction")
+    document = db.get(Document, extraction.document_id)
     if document is None:
         raise NotFoundError("Document")
-    if document.processing_status != DocumentProcessingStatus.PENDING:
-        raise InvalidOperationError("Only pending documents can begin extraction.")
-    extraction = DocumentExtraction(document_id=document.id, status=ExtractionStatus.PROCESSING)
-    db.add(extraction)
-    db.flush()
-    document.active_extraction_id = extraction.id
-    document.processing_status = DocumentProcessingStatus.PROCESSING
-    db.commit()
+    if extraction.status == ExtractionStatus.SUCCEEDED:
+        return extraction
 
     preview_keys: list[str] = []
     try:
@@ -182,34 +227,32 @@ async def run_extraction(
         extraction.provider_version = result.provider_version
         extraction.full_text = result.full_text
         extraction.completed_at = datetime.now(UTC)
+        extraction.error_code = extraction.error_message = None
         document.processing_status = DocumentProcessingStatus.SUCCEEDED
-        db.commit()
-    except (TimeoutError, ProviderError, OSError, ValueError) as exc:
+        db.flush()
+    except Exception:
         db.rollback()
-        extraction = db.get(DocumentExtraction, extraction.id)
-        document = db.get(Document, document_id)
-        assert extraction is not None and document is not None
-        extraction.status = ExtractionStatus.FAILED
-        extraction.error_code = (
-            "extraction_timeout" if isinstance(exc, TimeoutError) else "extraction_failed"
-        )
-        extraction.error_message = str(exc) or "Document extraction failed."
-        extraction.completed_at = datetime.now(UTC)
-        document.processing_status = DocumentProcessingStatus.FAILED
-        db.commit()
         for key in preview_keys:
             await storage.delete(key)
+        raise
     return extraction
 
 
-def get_active_extraction(db: Session, document_id: uuid.UUID) -> DocumentExtractionRead:
+def get_active_extraction(
+    db: Session,
+    document_id: uuid.UUID,
+    extraction_id: uuid.UUID | None = None,
+) -> DocumentExtractionRead:
     document = db.get(Document, document_id)
     if document is None:
         raise NotFoundError("Document")
-    if document.active_extraction_id is None:
+    extraction_id = extraction_id or document.active_extraction_id
+    if extraction_id is None:
         raise NotFoundError("Document extraction")
-    extraction = db.get(DocumentExtraction, document.active_extraction_id)
-    assert extraction is not None
+    extraction = db.get(DocumentExtraction, extraction_id)
+    if extraction is None or extraction.document_id != document_id:
+        raise NotFoundError("Document extraction")
+    task = db.scalar(select(BackgroundTask).where(BackgroundTask.extraction_id == extraction.id))
     pages: list[DocumentPageRead] = []
     for page in db.scalars(
         select(DocumentPage)
@@ -237,6 +280,8 @@ def get_active_extraction(db: Session, document_id: uuid.UUID) -> DocumentExtrac
             )
         )
     return DocumentExtractionRead(
+        version_number=extraction.version_number,
+        progress=TaskProgress.model_validate(task) if task else None,
         id=extraction.id,
         document_id=extraction.document_id,
         status=extraction.status,
@@ -251,13 +296,22 @@ def get_active_extraction(db: Session, document_id: uuid.UUID) -> DocumentExtrac
     )
 
 
-def get_page(db: Session, document_id: uuid.UUID, page_number: int) -> DocumentPage:
+def get_page(
+    db: Session,
+    document_id: uuid.UUID,
+    page_number: int,
+    extraction_id: uuid.UUID | None = None,
+) -> DocumentPage:
     document = db.get(Document, document_id)
     if document is None or document.active_extraction_id is None:
         raise NotFoundError("Document page")
+    if extraction_id:
+        extraction = db.get(DocumentExtraction, extraction_id)
+        if extraction is None or extraction.document_id != document_id:
+            raise NotFoundError("Document extraction")
     page = db.scalar(
         select(DocumentPage).where(
-            DocumentPage.extraction_id == document.active_extraction_id,
+            DocumentPage.extraction_id == (extraction_id or document.active_extraction_id),
             DocumentPage.page_number == page_number,
         )
     )

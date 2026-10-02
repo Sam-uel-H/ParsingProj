@@ -188,7 +188,9 @@ export function DocumentUploadPage() {
                     ) : undefined
                   }
                 >
-                  Upload and extraction completed.
+                  {item.error !== undefined
+                    ? 'Upload completed. Extraction could not be queued.'
+                    : 'Upload completed. Extraction queued.'}
                 </Alert>
               )}
             </CardContent>

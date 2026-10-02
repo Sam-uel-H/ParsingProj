@@ -24,6 +24,8 @@ from app.db.base import Base, UUIDPrimaryKeyMixin
 
 
 class ParsingJobStatus(StrEnum):
+    QUEUED = "queued"
+    PARSING = "parsing"
     RUNNING = "running"
     COMPLETED = "completed"
     COMPLETED_WITH_WARNINGS = "completed_with_warnings"
@@ -43,11 +45,17 @@ class InvocationStatus(StrEnum):
 class ParsingJob(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "parsing_jobs"
     __table_args__ = (
+        UniqueConstraint("started_by_id", "idempotency_key", name="uq_jobs_actor_idempotency"),
         Index("ix_parsing_jobs_document_started", "document_id", "started_at"),
         Index("ix_parsing_jobs_template_version_id", "template_version_id"),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), nullable=False)
+    document_extraction_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("document_extractions.id", ondelete="RESTRICT"), nullable=True
+    )
+    idempotency_key: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    strategy: Mapped[str] = mapped_column(String(20), nullable=False, default="per_column")
     template_version_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("template_versions.id"), nullable=False
     )

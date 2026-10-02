@@ -1,4 +1,44 @@
 services:
+  redis:
+    image: redis:7.4-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - parsing_redis_data:/data
+
+  worker:
+    build:
+      context: ../apps/api
+    command: celery -A app.jobs.celery_app worker --concurrency=2 --loglevel=info
+    environment: &worker_environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql+psycopg://parsing:parsing@postgres:5432/parsing}
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_STORAGE_PATH: /data/storage
+    volumes:
+      - ../.local-storage:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ../apps/api
+    command: celery -A app.jobs.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    environment: *worker_environment
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -17,4 +57,5 @@ services:
 
 volumes:
   parsing_postgres_data:
+  parsing_redis_data:
 

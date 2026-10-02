@@ -105,7 +105,7 @@ describe('DocumentUploadPage', () => {
     )
 
     expect(
-      await screen.findByText('Upload and extraction completed.'),
+      await screen.findByText('Upload completed. Extraction queued.'),
     ).toBeVisible()
     expect(screen.getByRole('link', { name: 'Open document' })).toHaveAttribute(
       'href',

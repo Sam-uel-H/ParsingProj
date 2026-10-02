@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import uuid
@@ -11,16 +10,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.models import User
-from app.common.errors import BusinessValidationError, NotFoundError
+from app.common.errors import BusinessValidationError, InvalidOperationError, NotFoundError
+from app.core.config import Settings
 from app.documents.models import (
     Document,
     DocumentExtraction,
     DocumentProcessingStatus,
     ExtractionStatus,
 )
+from app.jobs.models import BackgroundTask
+from app.jobs.schemas import TaskProgress
 from app.parsing.models import (
-    InvocationStatus,
-    LLMInvocation,
     ParsingJob,
     ParsingJobStatus,
     ParsingResult,
@@ -28,8 +28,6 @@ from app.parsing.models import (
 )
 from app.parsing.schemas import ParsingJobCreate, ParsingJobRead, ParsingResultRead
 from app.parsing.validators import validate_value
-from app.providers.errors import ProviderError
-from app.providers.llm import ExtractionRequest, LLMColumn, LLMProvider
 from app.templates.models import (
     ColumnType,
     Template,
@@ -52,6 +50,7 @@ def _json_value(value: str | None, column_type: ColumnType) -> str | int | bool 
 
 
 def _read_job(db: Session, job: ParsingJob) -> ParsingJobRead:
+    task = db.scalar(select(BackgroundTask).where(BackgroundTask.parsing_job_id == job.id))
     version = db.get(TemplateVersion, job.template_version_id)
     if version is None:
         raise NotFoundError("Template version")
@@ -64,6 +63,9 @@ def _read_job(db: Session, job: ParsingJob) -> ParsingJobRead:
         )
     )
     return ParsingJobRead(
+        document_extraction_id=job.document_extraction_id,
+        strategy=job.strategy,
+        progress=TaskProgress.model_validate(task) if task else None,
         id=job.id,
         document_id=job.document_id,
         template_id=version.template_id,
@@ -97,15 +99,36 @@ def _read_job(db: Session, job: ParsingJob) -> ParsingJobRead:
     )
 
 
-async def run_job(
+def queue_job(
     db: Session,
     data: ParsingJobCreate,
     actor: User,
-    provider: LLMProvider,
-    retry_limit: int,
-    timeout_seconds: float,
-) -> ParsingJobRead:
-    document = db.get(Document, data.document_id)
+    settings: Settings,
+) -> tuple[ParsingJob, BackgroundTask]:
+    document = db.scalar(select(Document).where(Document.id == data.document_id).with_for_update())
+    strategy = data.strategy or settings.parsing_strategy
+    if data.idempotency_key:
+        existing = db.scalar(
+            select(ParsingJob).where(
+                ParsingJob.started_by_id == actor.id,
+                ParsingJob.idempotency_key == data.idempotency_key,
+            )
+        )
+        if existing:
+            version = db.get(TemplateVersion, existing.template_version_id)
+            if (
+                existing.document_id != data.document_id
+                or version is None
+                or version.template_id != data.template_id
+                or existing.strategy != strategy
+            ):
+                raise InvalidOperationError("Idempotency key was already used for a different job.")
+            task = db.scalar(
+                select(BackgroundTask).where(BackgroundTask.parsing_job_id == existing.id)
+            )
+            assert task is not None
+            db.commit()
+            return existing, task
     template = db.get(Template, data.template_id)
     if document is None:
         raise NotFoundError("Document")
@@ -144,94 +167,30 @@ async def run_job(
     )
     job = ParsingJob(
         document_id=document.id,
+        document_extraction_id=extraction.id,
+        idempotency_key=data.idempotency_key,
+        strategy=strategy,
         template_version_id=version.id,
-        status=ParsingJobStatus.RUNNING,
+        status=ParsingJobStatus.QUEUED,
         domain_override=mismatch,
         started_by_id=actor.id,
     )
     db.add(job)
     db.flush()
 
-    warning = False
-    for column in columns:
-        canonical: str | None = None
-        message: str | None = None
-        raw: str | None = None
-        confidence: float | None = None
-        attempts = 0
-        for attempt in range(retry_limit + 1):
-            attempts = attempt
-            llm_column = LLMColumn(
-                column.name,
-                column.description or "",
-                column.column_type.value,
-                column.prompt_text or "",
-                tuple(column.enum_values or []),
-            )
-            try:
-                response = await asyncio.wait_for(
-                    provider.extract(
-                        ExtractionRequest(
-                            document_text=extraction.full_text or "",
-                            columns=(llm_column,),
-                            correction_instruction=message,
-                        )
-                    ),
-                    timeout_seconds,
-                )
-                value = response.values[0] if response.values else None
-                raw = value.raw_output if value else None
-                confidence = value.confidence if value else None
-                db.add(
-                    LLMInvocation(
-                        parsing_job_id=job.id,
-                        template_column_id=column.id,
-                        attempt_number=attempt + 1,
-                        status=InvocationStatus.SUCCEEDED,
-                        provider_name=response.metadata.provider,
-                        model_name=response.metadata.model,
-                        raw_output=raw,
-                        input_tokens=response.usage.input_tokens,
-                        output_tokens=response.usage.output_tokens,
-                        latency_ms=response.usage.latency_ms,
-                    )
-                )
-                canonical, message = validate_value(
-                    value.value if value else None, column.column_type, column.enum_values
-                )
-                if message is None:
-                    break
-            except (TimeoutError, ProviderError) as exc:
-                message = "LLM provider timed out." if isinstance(exc, TimeoutError) else str(exc)
-                db.add(
-                    LLMInvocation(
-                        parsing_job_id=job.id,
-                        template_column_id=column.id,
-                        attempt_number=attempt + 1,
-                        status=InvocationStatus.FAILED,
-                        error_message=message,
-                    )
-                )
-        valid = message is None
-        warning = warning or not valid
-        db.add(
-            ParsingResult(
-                parsing_job_id=job.id,
-                template_column_id=column.id,
-                raw_output=raw,
-                canonical_value=canonical,
-                validation_status=(
-                    ResultValidationStatus.VALID if valid else ResultValidationStatus.NEEDS_REVIEW
-                ),
-                validation_message=message,
-                confidence=confidence,
-                retry_count=attempts,
-            )
-        )
-    job.status = ParsingJobStatus.COMPLETED_WITH_WARNINGS if warning else ParsingJobStatus.COMPLETED
-    job.completed_at = datetime.now(UTC)
+    task = BackgroundTask(
+        parsing_job_id=job.id, max_attempts=settings.job_max_attempts, total_units=len(columns)
+    )
+    db.add(task)
     db.commit()
-    return _read_job(db, job)
+    return job, task
+
+
+def list_jobs(db: Session, document_id: uuid.UUID | None = None) -> list[ParsingJobRead]:
+    query = select(ParsingJob).order_by(ParsingJob.started_at.desc()).limit(100)
+    if document_id:
+        query = query.where(ParsingJob.document_id == document_id)
+    return [_read_job(db, job) for job in db.scalars(query)]
 
 
 def get_job(db: Session, job_id: uuid.UUID) -> ParsingJobRead:
@@ -252,6 +211,7 @@ def correct_result(
     value: object,
     actor: User,
 ) -> ParsingResultRead:
+    require_finished(db, job_id)
     result = db.get(ParsingResult, result_id)
     if result is None or result.parsing_job_id != job_id:
         raise NotFoundError("Parsing result")
@@ -291,6 +251,7 @@ def correct_result(
 
 
 def export_job_csv(db: Session, job_id: uuid.UUID) -> str:
+    require_finished(db, job_id)
     results = get_job_results(db, job_id)
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\n")
@@ -300,6 +261,7 @@ def export_job_csv(db: Session, job_id: uuid.UUID) -> str:
 
 
 def export_job_json(db: Session, job_id: uuid.UUID) -> dict[str, object]:
+    require_finished(db, job_id)
     job = get_job(db, job_id)
     return {
         "job_id": str(job.id),
@@ -319,3 +281,11 @@ def export_job_json(db: Session, job_id: uuid.UUID) -> dict[str, object]:
             for result in job.results
         ],
     }
+
+
+def require_finished(db: Session, job_id: uuid.UUID) -> None:
+    job = db.get(ParsingJob, job_id)
+    if job is None:
+        raise NotFoundError("Parsing job")
+    if job.status not in {ParsingJobStatus.COMPLETED, ParsingJobStatus.COMPLETED_WITH_WARNINGS}:
+        raise InvalidOperationError("Results can be reviewed or exported after the job completes.")

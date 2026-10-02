@@ -31,8 +31,36 @@ def migrated_postgres() -> Iterator[None]:
 
 @pytest.fixture
 def phase1_client(migrated_postgres: None) -> Iterator[TestClient]:
-    from app.db.session import engine
+    from datetime import UTC, datetime
+
+    from app.core.config import get_settings
+    from app.db.session import SessionFactory, engine
+    from app.documents.dependencies import get_document_extractor, get_object_storage
+    from app.jobs.dispatch import get_dispatcher
+    from app.jobs.models import BackgroundTask
+    from app.jobs.runner import process_task
     from app.main import app
+    from app.parsing.dependencies import get_llm_provider
+
+    async def drain_task(task_id):
+        def resolve(factory):
+            return app.dependency_overrides.get(factory, factory)()
+
+        settings = resolve(get_settings)
+        for _ in range(settings.job_max_attempts):
+            await process_task(
+                task_id,
+                settings=settings,
+                storage=resolve(get_object_storage),
+                extractor=resolve(get_document_extractor),
+                provider=resolve(get_llm_provider),
+            )
+            with SessionFactory() as db:
+                task = db.get(BackgroundTask, task_id)
+                if task.state != "queued":
+                    break
+                task.available_at = datetime.now(UTC)
+                db.commit()
 
     with engine.begin() as connection:
         connection.execute(
@@ -42,5 +70,9 @@ def phase1_client(migrated_postgres: None) -> Iterator[TestClient]:
             )
         )
 
-    with TestClient(app) as client:
-        yield client
+    app.dependency_overrides[get_dispatcher] = lambda: drain_task
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.pop(get_dispatcher, None)

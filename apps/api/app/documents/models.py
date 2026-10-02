@@ -38,12 +38,14 @@ class DocumentUploadStatus(StrEnum):
 
 class DocumentProcessingStatus(StrEnum):
     PENDING = "pending"
+    QUEUED = "queued"
     PROCESSING = "processing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
 
 class ExtractionStatus(StrEnum):
+    QUEUED = "queued"
     PROCESSING = "processing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -92,6 +94,11 @@ class Document(UUIDPrimaryKeyMixin, Base):
 
 class DocumentExtraction(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "document_extractions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "version_number", name="uq_extractions_document_version"),
+    )
+
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     document_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("documents.id", ondelete="RESTRICT"), nullable=False, index=True

@@ -23,6 +23,8 @@ import {
   type ParsingResult,
 } from '../../api/parsing'
 import { ApiErrorAlert } from '../../components/ApiErrorAlert'
+import { isJobActive } from '../../api/jobs'
+import { JobProgress } from '../../components/JobProgress'
 
 function initialDrafts(results: ParsingResult[]): Record<string, string> {
   return Object.fromEntries(
@@ -122,6 +124,10 @@ export function ParsingResults({ job }: { job: ParsingJob }) {
     results.every((result) => result.validation_status === 'valid')
       ? 'completed'
       : job.status
+
+  if (isJobActive(job.status) || job.status === 'failed') {
+    return <JobProgress progress={job.progress} status={job.status} />
+  }
 
   return (
     <Stack spacing={2}>

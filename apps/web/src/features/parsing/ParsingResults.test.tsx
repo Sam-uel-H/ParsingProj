@@ -78,6 +78,33 @@ function renderResults(data = job()) {
 }
 
 describe('ParsingResults', () => {
+  it('shows progress without allowing review or export before completion', () => {
+    renderResults({
+      ...job(),
+      status: 'queued',
+      progress: {
+        id: 'task-1',
+        state: 'queued',
+        attempts: 1,
+        max_attempts: 4,
+        completed_units: 2,
+        total_units: 5,
+        error_code: 'provider_rate_limited',
+        error_message: 'Provider rate limit reached.',
+        retryable: true,
+        available_at: '2026-10-02T12:00:00Z',
+      },
+    })
+    expect(
+      screen.getByRole('progressbar', { name: 'Job progress' }),
+    ).toHaveAttribute('aria-valuenow', '40')
+    expect(screen.getByText(/Retrying after/)).toBeVisible()
+    expect(
+      screen.queryByRole('link', { name: 'Export CSV' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Reviewed value')).not.toBeInTheDocument()
+  })
+
   it('saves a reviewed correction and exposes export actions', async () => {
     mockedCorrectParsingResult.mockResolvedValue({
       ...job().results[0],

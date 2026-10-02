@@ -9,6 +9,8 @@ vi.mock('../../api/documents', () => ({
   getDocument: vi.fn(),
   getDocumentExtraction: vi.fn(),
   extractDocument: vi.fn(),
+  reprocessDocument: vi.fn(),
+  listExtractions: vi.fn().mockResolvedValue([]),
   documentContentUrl: vi.fn(() => '/content'),
   documentPagePreviewUrl: vi.fn((_id, page) => `/preview/${page}`),
 }))

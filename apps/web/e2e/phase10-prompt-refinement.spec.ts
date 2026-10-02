@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { waitForExtraction } from './helpers'
 
 const api = 'http://127.0.0.1:8000'
 
@@ -37,9 +38,8 @@ test('generates, refines, dry-runs, verifies evidence, and accepts a prompt', as
     })
   ).json()
   const documentId = upload.results[0].document.id as string
-  const extraction = await (
-    await request.post(`${api}/documents/${documentId}/extract`)
-  ).json()
+  await request.post(`${api}/documents/${documentId}/extract`)
+  const extraction = await waitForExtraction(request, documentId)
   const columnId = template.current_version.columns[0].id as string
   expect(
     (

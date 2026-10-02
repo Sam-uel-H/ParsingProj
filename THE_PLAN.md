@@ -3,7 +3,7 @@
 **Project:** Prompt-Driven Document Parsing and Template Extraction System  
 **Reference domain:** Agent Bank Interest and Payment Notices  
 **Status:** Canonical implementation roadmap  
-**Implementation status:** MVP complete through Phase 7; Phases 8-10 complete; Phases 11-14 not started
+**Implementation status:** MVP complete through Phase 7; Phases 8-10 complete; Phase 11 implemented, verification in progress; Phases 12-14 not started
 **Source:** Requirements Specification version 1.0, dated August 17, 2026
 
 ---
@@ -1622,6 +1622,10 @@ Move long-running extraction and parsing operations into durable background work
 - Reprocess an extraction.
 - Verify old extraction history remains available.
 - Measure a 20-column, 10-page document against the agreed SLA.
+
+The agreed SLA is 30 seconds from submission to completed results (confirmed October 2, 2026).
+Deterministic-provider benchmarks measure orchestration only; production acceptance also requires
+the approved OCR and LLM providers and an approved representative document set.
 
 ### Definition of done
 
